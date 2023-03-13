@@ -1,0 +1,99 @@
+name: Dev - Build and Test Media Management microservice and then deploy to AWS Lambda
+
+// running on every commit not on main branch could be overwriting
+
+on:
+  push:
+    branches:
+      - '!main*'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps: // checks out the repo code to action runner
+      - uses: actions/checkout@v2
+
+      - name: Install Node.js
+        uses: actions/setup-node@v2.1.5
+        with:
+          node-version: '16'
+
+      - name: Install dependencies for React app
+        run:
+          npm install
+        working-directory: ./frontend
+
+
+// leaking their access key and secret access key to the public repo can be accessed by the browser. HUGE NO NO!!!!!
+// trying to upload images not the secure way to do it. presigned url that the api gives back to the front end lets you send an image
+// keeps the front end from needing to know the access key and secret access key
+      - name: 'Create .env file for React'
+        run: |
+          touch .env.local
+          echo REACT_APP_API_URL="https://nga6lztzn8.execute-api.us-east-2.amazonaws.com/_api/v1" >> .env.local
+          echo REACT_APP_S3_BUCKET="wildtrack-media-dev-s3bucket" >> .env.local
+          echo REACT_APP_S3_REGION="us-east-2" >> .env.local
+          echo REACT_APP_S3_ACCESSKEY="${{ secrets.REACT_APP_S3_ACCESSKEY }}" >> .env.local
+          echo REACT_APP_S3_SECRETACCESSKEY="${{ secrets.REACT_APP_S3_SECRETACCESSKEY }}" >> .env.local
+          cat .env.local
+          rm .env.development
+        working-directory: ./frontend
+
+// installing npm packages and running build but doing it again
+      - name: Run build and tests for React app
+        run: |
+          npm install
+          npm install -g uuid
+          npm run build
+        working-directory: ./frontend
+
+      - name: Move React build content to root folder
+        run: mv ./frontend/build/* .
+
+
+// setting up python 3.9 and installing virtualenv and running pytest
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.9'
+
+
+      - name: Install Python prerequisites
+        run: |
+          pip install virtualenv
+          virtualenv .env
+          source .env/bin/activate
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r requirements.txt
+          pip install pytest
+        shell: bash
+
+      # - name: Run pytest and generate report
+      #   run: pytest --html=report.html
+
+      # - name: Publish testing report
+      #   uses: actions/upload-artifact@v2
+      #   with:
+      #     name: pytest-report
+      #     path: report.html
+
+
+      - name: Install Serverless Framework
+        run: |
+          npm install -g serverless
+          serverless plugin install -n serverless-python-requirements
+          serverless plugin install -n serverless-wsgi
+
+
+// values are getting set correctly
+      - name: Deploy to AWS Lambda
+        env:
+          SERVERLESS_ACCESS_KEY: ${{ secrets.DEV_SERVERLESS_ACCESS_KEY }}
+          AWS_S3_BUCKET: "wildtrack-media-dev-s3bucket"
+          DB_NAME: "mediamanagement"
+          DB_LOCAL: ${{ secrets.DEV_DB_CONNECTION_STR }}
+        run: |
+          echo $AWS_S3_BUCKET
+          echo $DB_NAME
+          serverless deploy --stage dev
+
